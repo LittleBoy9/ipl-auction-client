@@ -11,10 +11,13 @@ export function SocketProvider({ children }) {
 
   useEffect(() => {
     const newSocket = io(SERVER_URL, {
-      transports: ['websocket', 'polling'],
+      // Use polling first for tunnel/proxy compatibility (Dev Tunnels, ngrok, etc.)
+      // WebSocket upgrade often fails through tunnels
+      transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      timeout: 20000,
     });
 
     newSocket.on('connect', () => {
@@ -25,6 +28,10 @@ export function SocketProvider({ children }) {
     newSocket.on('disconnect', () => {
       console.log('Disconnected from server');
       setConnected(false);
+    });
+
+    newSocket.on('connect_error', (err) => {
+      console.error('Connection error:', err.message);
     });
 
     setSocket(newSocket);
