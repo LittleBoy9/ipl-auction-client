@@ -3,7 +3,7 @@ import { useSocket } from '../context/SocketContext';
 import { sounds } from '../utils/sounds';
 import Confetti from '../components/Confetti';
 
-export default function AuctionRoom({ roomData: initialRoomData, playerId }) {
+export default function AuctionRoom({ roomData: initialRoomData, playerId, onLeave }) {
   const { socket } = useSocket();
   const [room, setRoom] = useState(initialRoomData);
   const [timer, setTimer] = useState(0);
@@ -333,7 +333,23 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId }) {
     return (
       <div className="lobby-container">
         <div className="lobby-card">
-          <h2>⏳ Waiting Room</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <h2>⏳ Waiting Room</h2>
+            <button 
+              onClick={onLeave}
+              style={{ 
+                background: 'rgba(255,255,255,0.05)', 
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: 'rgba(255,255,255,0.6)',
+                padding: '0.4rem 0.8rem',
+                borderRadius: '8px',
+                fontSize: '0.8rem',
+                cursor: 'pointer'
+              }}
+            >
+              🚪 Exit
+            </button>
+          </div>
           
           <div className="room-code-display">
             <h3>Room Code</h3>
@@ -356,6 +372,18 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId }) {
               }}>
                 <span>{p.connected ? '🟢' : '🔴'}{p.isBot ? '🤖' : ''}</span>
                 <span style={{ fontWeight: 600 }}>{p.name}</span>
+                {p.franchise && (
+                  <span style={{ 
+                    fontSize: '0.65rem', 
+                    fontWeight: 800,
+                    background: 'rgba(255,255,255,0.1)', 
+                    padding: '2px 8px', 
+                    borderRadius: '4px',
+                    border: '1px solid rgba(255,255,255,0.15)'
+                  }}>
+                    {p.franchise}
+                  </span>
+                )}
                 {p.isHost && <span style={{ fontSize: '0.7rem', background: '#e94560', padding: '2px 8px', borderRadius: '4px' }}>HOST</span>}
                 {p.isBot && isHost && (
                   <button 
@@ -522,6 +550,24 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId }) {
           {tab.label}
         </button>
       ))}
+      <button
+        onClick={onLeave}
+        style={{
+          padding: '0.7rem 1rem',
+          borderRadius: '10px',
+          border: '1px solid rgba(255,255,255,0.1)',
+          background: 'rgba(255,255,255,0.05)',
+          color: 'rgba(255,255,255,0.6)',
+          fontSize: '0.8rem',
+          cursor: 'pointer',
+          transition: 'all 0.2s',
+          fontFamily: 'inherit',
+          whiteSpace: 'nowrap'
+        }}
+        title="Leave Room"
+      >
+        🚪
+      </button>
     </div>
   );
 
@@ -819,6 +865,20 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>
                       #{idx + 1} {isMe ? '👤 ' : ''}{p.name}
+                      {p.franchise && (
+                        <span style={{ 
+                          fontSize: '0.6rem', 
+                          fontWeight: 800,
+                          marginLeft: '4px',
+                          padding: '1px 6px', 
+                          background: 'rgba(255,255,255,0.1)', 
+                          borderRadius: '4px',
+                          border: '1px solid rgba(255,255,255,0.15)',
+                          verticalAlign: 'middle'
+                        }}>
+                          {p.franchise}
+                        </span>
+                      )}
                       {p.isHost && ' 👑'}
                       {p.isBot && ' 🤖'}
                     </span>
@@ -1403,7 +1463,8 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId }) {
             <img 
               src={p.image} 
               alt={p.name}
-              onError={(e) => { e.target.src = 'https://via.placeholder.com/32?text=P'; }}
+              style={{ width: '40px', height: '40px', borderRadius: '8px', objectFit: 'cover' }}
+              onError={(e) => { e.target.src = 'https://via.placeholder.com/40?text=P'; }}
             />
             <div>
               <div style={{ fontWeight: 600 }}>{p.name}</div>
