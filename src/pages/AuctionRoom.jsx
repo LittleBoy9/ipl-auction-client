@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { sounds } from '../utils/sounds';
 import Confetti from '../components/Confetti';
+import { getSport, smartNeedLabel } from '../data/sports';
 
 export default function AuctionRoom({ roomData: initialRoomData, playerId, onLeave }) {
   const { socket } = useSocket();
@@ -23,6 +24,25 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
 
   const me = room.players.find(p => p.id === playerId);
   const isHost = me?.isHost || false;
+  const sport = getSport(room.settings.sport);
+  const money = (amt) => sport.money(amt);
+
+  // Small team crest for a franchise code (uses the fetched badge URLs).
+  const franchiseLogo = (code) => sport.franchises.find(f => f.code === code)?.logo || null;
+  const crest = (code, size = 16) => {
+    if (!code) return null;
+    const logo = franchiseLogo(code);
+    if (!logo) return null;
+    return (
+      <img
+        src={logo}
+        alt=""
+        title={code}
+        style={{ width: size, height: size, objectFit: 'contain', verticalAlign: 'middle', marginRight: 4, borderRadius: 3 }}
+        onError={(e) => { e.target.style.display = 'none'; }}
+      />
+    );
+  };
 
   // Sound effects on timer
   useEffect(() => {
@@ -59,9 +79,9 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
         else sounds.sold();
       }
       showNotification(
-        data.winnerId === playerId 
-          ? `🔨 You won ${data.player.name} for ₹${data.price}Cr!` 
-          : `🔨 ${data.player.name} → ${data.winnerName} (₹${data.price}Cr)`,
+        data.winnerId === playerId
+          ? `🔨 You won ${data.player.name} for ${money(data.price)}!`
+          : `🔨 ${data.player.name} → ${data.winnerName} (${money(data.price)})`,
         data.winnerId === playerId ? 'success' : 'default'
       );
     };
@@ -197,11 +217,6 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
     socket.emit('toggle-pause', { roomCode: room.code });
   };
 
-  const skipPlayer = () => {
-    if (!socket || !isHost) return;
-    socket.emit('skip-player', { roomCode: room.code });
-  };
-
   const sendChat = (e) => {
     e.preventDefault();
     if (!socket || !chatMsg.trim()) return;
@@ -227,69 +242,19 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
   const getNextBidAmount = () => {
     if (!room.currentPlayer) return 0;
     const current = room.currentBid > 0 ? room.currentBid : room.currentPlayer.basePrice;
-    let increment = 0.30; // default 30L above 5Cr
-    if (current < 0.50) increment = 0.05;        // below 50L: +5L
-    else if (current < 1.00) increment = 0.10;   // 50L to 1Cr: +10L
-    else if (current < 5.00) increment = 0.25;   // 1Cr to 5Cr: +25L
-    return parseFloat((current + increment).toFixed(2));
+    return parseFloat((current + sport.increment(current)).toFixed(2));
   };
 
-  const calculateStarRating = (player) => {
-    let score = 50; // base
-    if (player.battingAvg && player.strikeRate) {
-      score = Math.max(score, (player.battingAvg * player.strikeRate) / 100);
-    }
-    if (player.wickets !== null && player.economy) {
-      score = Math.max(score, player.wickets * (12 - Math.min(player.economy, 12)) * 3);
-    }
-    if (player.basePrice >= 10) score += 15;
-    else if (player.basePrice >= 5) score += 10;
-    else if (player.basePrice >= 2) score += 5;
-    
-    if (score >= 90) return 5;
-    if (score >= 70) return 4;
-    if (score >= 50) return 3;
-    if (score >= 30) return 2;
-    return 1;
-  };
+  const calculateStarRating = (player) => sport.starRating(player);
 
   const renderStars = (rating) => {
     return '⭐'.repeat(rating) + '☆'.repeat(5 - rating);
   };
 
-  const calculatePlayerScore = (player) => {
-    let batScore = 0, bowlScore = 0;
-    
-    if (player.battingAvg && player.strikeRate) {
-      batScore = Math.min(100, (player.battingAvg * player.strikeRate) / 200);
-    }
-    if (player.wickets !== null && player.economy) {
-      bowlScore = Math.min(100, player.wickets * (15 - Math.min(player.economy, 15)) / 15 * 8);
-    }
-    
-    if (player.role === 'Batter' || player.role === 'WK-Batter') return Math.round(batScore);
-    if (player.role === 'Bowler') return Math.round(bowlScore);
-    if (player.role === 'All-rounder') return Math.round((batScore + bowlScore) / 2);
-    return Math.round(batScore || bowlScore || 50);
-  };
-
   const calculateTeamScore = (team) => {
     if (!team || team.length === 0) return 0;
-    const total = team.reduce((sum, p) => sum + calculatePlayerScore(p), 0);
+    const total = team.reduce((sum, p) => sum + sport.playerScore(p), 0);
     return Math.round(total / Math.max(team.length, 11));
-  };
-
-  const getSquadBalance = (team) => {
-    const counts = { 'WK-Batter': 0, 'Batter': 0, 'Bowler': 0, 'All-rounder': 0 };
-    team?.forEach(p => {
-      if (counts[p.role] !== undefined) counts[p.role]++;
-    });
-    return {
-      wk: { have: counts['WK-Batter'], need: 1 },
-      batters: { have: counts['Batter'] + counts['WK-Batter'], need: 3 },
-      bowlers: { have: counts['Bowler'], need: 3 },
-      allRounders: { have: counts['All-rounder'], need: 1 },
-    };
   };
 
   const toggleAutoBid = () => {
@@ -315,10 +280,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
   const getBidIncrementLabel = () => {
     if (!room.currentPlayer) return '';
     const current = room.currentBid > 0 ? room.currentBid : room.currentPlayer.basePrice;
-    if (current < 0.50) return '+₹5L';
-    if (current < 1.00) return '+₹10L';
-    if (current < 5.00) return '+₹25L';
-    return '+₹30L';
+    return sport.incrementLabel(current);
   };
 
   const getBudgetColor = (budget, max) => {
@@ -371,6 +333,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                 marginBottom: '0.5rem'
               }}>
                 <span>{p.connected ? '🟢' : '🔴'}{p.isBot ? '🤖' : ''}</span>
+                {crest(p.franchise, 20)}
                 <span style={{ fontWeight: 600 }}>{p.name}</span>
                 {p.franchise && (
                   <span style={{ 
@@ -420,10 +383,10 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
           <div style={{ textAlign: 'left', margin: '1rem 0', padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px' }}>
             <h4 style={{ marginBottom: '0.5rem', color: '#e94560' }}>⚙️ Settings</h4>
             <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)' }}>
-              💰 Budget: ₹{room.settings.budget} Cr | 👥 Squad: {room.settings.squadSize} | ⏱️ Timer: {room.settings.bidTimer}s
+              💰 Budget: {money(room.settings.budget)} | 👥 Squad: {room.settings.squadSize} | ⏱️ Timer: {room.settings.bidTimer}s
             </p>
             <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)' }}>
-              🏏 Teams: {room.settings.teams?.length || 10}/10 | 🎯 Players: {room.totalPlayers}
+              {sport.icon} {sport.label} | 🎯 Players: {room.totalPlayers}
             </p>
           </div>
 
@@ -466,8 +429,8 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                   <td className={`rank-${r.rank}`}>#{r.rank}</td>
                   <td style={{ fontWeight: 600 }}>{r.name}</td>
                   <td>{r.teamSize}</td>
-                  <td>₹{r.spent.toFixed(1)} Cr</td>
-                  <td>₹{r.remaining.toFixed(1)} Cr</td>
+                  <td>{money(r.spent)}</td>
+                  <td>{money(r.remaining)}</td>
                 </tr>
               ))}
             </tbody>
@@ -486,7 +449,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                       background: 'rgba(255,255,255,0.05)', 
                       borderRadius: '6px' 
                     }}>
-                      {tp.name} (₹{tp.soldPrice}Cr)
+                      {tp.name} ({money(tp.soldPrice)})
                     </span>
                   ))}
                 </div>
@@ -576,7 +539,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
     <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
       {room.players.map(p => {
         const score = calculateTeamScore(p.team);
-        const bal = getSquadBalance(p.team);
+        const needs = sport.squadNeeds(p.team);
         const isMe = p.id === playerId;
         return (
           <div key={p.id} style={{
@@ -588,7 +551,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
               <div>
                 <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                  {isMe ? '👤 ' : ''}{p.name}
+                  {crest(p.franchise, 20)}{isMe ? '👤 ' : ''}{p.name}
                   {p.isHost && ' 👑'}
                 </div>
                 <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)' }}>
@@ -604,19 +567,14 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
             </div>
             
             <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.8rem', fontSize: '0.8rem' }}>
-              <span>💰 ₹{p.budget.toFixed(1)}Cr left</span>
-              <span>💸 ₹{p.spent.toFixed(1)}Cr spent</span>
+              <span>💰 {money(p.budget)} left</span>
+              <span>💸 {money(p.spent)} spent</span>
               <span>👥 {p.team.length}/{room.settings.squadSize}</span>
             </div>
-            
+
             {/* Squad Balance Mini */}
             <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.8rem' }}>
-              {[
-                { icon: '🧤', have: bal.wk.have, need: bal.wk.need },
-                { icon: '🏏', have: bal.batters.have, need: bal.batters.need },
-                { icon: '🎯', have: bal.bowlers.have, need: bal.bowlers.need },
-                { icon: '⚡', have: bal.allRounders.have, need: bal.allRounders.need },
-              ].map((item, i) => (
+              {needs.map((item, i) => (
                 <span key={i} style={{
                   fontSize: '0.7rem',
                   padding: '0.2rem 0.5rem',
@@ -649,7 +607,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                       <div style={{ fontWeight: 600 }}>{tp.name}</div>
                       <div style={{ fontSize: '0.7rem', opacity: 0.5 }}>{tp.role}</div>
                     </div>
-                    <div style={{ color: '#00ff88', fontWeight: 600, fontSize: '0.8rem' }}>₹{tp.soldPrice}Cr</div>
+                    <div style={{ color: '#00ff88', fontWeight: 600, fontSize: '0.8rem' }}>{money(tp.soldPrice)}</div>
                     <div style={{ fontSize: '0.75rem' }}>{renderStars(calculateStarRating(tp))}</div>
                   </div>
                 ))}
@@ -671,13 +629,12 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
       ? searched 
       : searched.filter(p => p.role === poolFilter);
     
-    const categories = [
-      { key: 'all', label: 'All', count: room.allPlayers?.length || 0 },
-      { key: 'Batter', label: 'Batters', count: room.allPlayers?.filter(p => p.role === 'Batter').length || 0 },
-      { key: 'Bowler', label: 'Bowlers', count: room.allPlayers?.filter(p => p.role === 'Bowler').length || 0 },
-      { key: 'All-rounder', label: 'All-Rounders', count: room.allPlayers?.filter(p => p.role === 'All-rounder').length || 0 },
-      { key: 'WK-Batter', label: 'WK-Batters', count: room.allPlayers?.filter(p => p.role === 'WK-Batter').length || 0 },
-    ];
+    const categories = sport.poolCategories.map(cat => ({
+      ...cat,
+      count: cat.key === 'all'
+        ? (room.allPlayers?.length || 0)
+        : (room.allPlayers?.filter(p => p.role === cat.key).length || 0),
+    }));
     
     return (
       <div style={{ gridColumn: '1 / -1' }}>
@@ -796,32 +753,33 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                   </div>
                 )}
                 
-                <div style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.2rem' }}>{p.name}</div>
-                <div style={{ fontSize: '0.8rem', marginBottom: '0.3rem' }}>{renderStars(stars)}</div>
-                <div style={{ fontSize: '0.75rem', opacity: 0.6, marginBottom: '0.5rem' }}>
-                  {p.role} • {p.nationality}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                  <img
+                    src={p.image}
+                    alt={p.name}
+                    style={{ width: '46px', height: '46px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)' }}
+                    onError={(e) => { e.target.src = 'https://via.placeholder.com/46?text=P'; }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                    <div style={{ fontSize: '0.8rem' }}>{renderStars(stars)}</div>
+                    <div style={{ fontSize: '0.72rem', opacity: 0.6 }}>{p.role} • {p.nationality}</div>
+                  </div>
                 </div>
                 
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-                  {p.battingAvg && (
-                    <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>Avg: {p.battingAvg}</span>
-                  )}
-                  {p.strikeRate && (
-                    <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>SR: {p.strikeRate}</span>
-                  )}
-                  {p.wickets !== null && (
-                    <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>Wkts: {p.wickets}</span>
-                  )}
-                  {p.economy && (
-                    <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>Econ: {p.economy}</span>
-                  )}
+                  {sport.statFields(p).slice(0, 4).map((stat, si) => (
+                    <span key={si} style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
+                      {stat.label}: {stat.value}
+                    </span>
+                  ))}
                 </div>
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 700, color: '#ffd700' }}>₹{p.basePrice}Cr</span>
+                  <span style={{ fontWeight: 700, color: '#ffd700' }}>{money(p.basePrice)}</span>
                   {isSold && (
                     <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>
-                      → {p.soldTo} (₹{p.soldPrice}Cr)
+                      → {p.soldTo} ({money(p.soldPrice)})
                     </span>
                   )}
                 </div>
@@ -864,21 +822,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                      #{idx + 1} {isMe ? '👤 ' : ''}{p.name}
-                      {p.franchise && (
-                        <span style={{ 
-                          fontSize: '0.6rem', 
-                          fontWeight: 800,
-                          marginLeft: '4px',
-                          padding: '1px 6px', 
-                          background: 'rgba(255,255,255,0.1)', 
-                          borderRadius: '4px',
-                          border: '1px solid rgba(255,255,255,0.15)',
-                          verticalAlign: 'middle'
-                        }}>
-                          {p.franchise}
-                        </span>
-                      )}
+                      #{idx + 1} {crest(p.franchise)}{isMe ? '👤 ' : ''}{p.name}
                       {p.isHost && ' 👑'}
                       {p.isBot && ' 🤖'}
                     </span>
@@ -897,7 +841,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.5)', marginTop: '0.2rem' }}>
                     <span>{p.team.length}/{room.settings.squadSize} players</span>
-                    <span>₹{p.budget.toFixed(1)}Cr left</span>
+                    <span>{money(p.budget)} left</span>
                   </div>
                 </div>
               );
@@ -948,7 +892,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                   borderBottom: i < room.bidHistory.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none'
                 }}>
                   <span>{bid.bidderName} {bid.bidderId?.startsWith('bot-') ? '🤖' : ''}</span>
-                  <span style={{ color: '#ffd700', fontWeight: 600 }}>₹{bid.amount >= 1 ? bid.amount.toFixed(2) + 'Cr' : (bid.amount * 100).toFixed(0) + 'L'}</span>
+                  <span style={{ color: '#ffd700', fontWeight: 600 }}>{money(bid.amount)}</span>
                 </div>
               ))}
             </div>
@@ -969,24 +913,18 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
           borderRadius: '12px'
         }}>
           <span style={{ fontSize: '0.9rem' }}>
-            🏏 Player {room.soldCount + room.unsoldCount + 1} / {room.totalPlayers}
+            {sport.icon} Player {room.soldCount + room.unsoldCount + 1} / {room.totalPlayers}
           </span>
           <span style={{ fontSize: '0.9rem', color: '#00ff88' }}>
             ✅ Sold: {room.soldCount} | ❌ Unsold: {room.unsoldCount}
           </span>
           {isHost && (
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button 
+              <button
                 onClick={togglePause}
                 style={{ padding: '0.4rem 1rem', borderRadius: '8px', border: 'none', background: '#e94560', color: '#fff', cursor: 'pointer' }}
               >
                 {room.status === 'paused' ? '▶️ Resume' : '⏸️ Pause'}
-              </button>
-              <button 
-                onClick={skipPlayer}
-                style={{ padding: '0.4rem 1rem', borderRadius: '8px', border: 'none', background: 'rgba(255,255,255,0.1)', color: '#fff', cursor: 'pointer' }}
-              >
-                ⏭️ Skip
               </button>
             </div>
           )}
@@ -1040,17 +978,12 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                   fontSize: '0.75rem',
                   fontWeight: 600
                 }}>
-                  Base: ₹{room.currentPlayer.basePrice >= 1 ? room.currentPlayer.basePrice + 'Cr' : (room.currentPlayer.basePrice * 100).toFixed(0) + 'L'}
+                  Base: {money(room.currentPlayer.basePrice)}
                 </div>
                 {/* Smart Highlight: show if this role is needed */}
                 {(() => {
-                  const bal = getSquadBalance(me?.team || []);
-                  const needs = [];
-                  if (room.currentPlayer.role === 'WK-Batter' && bal.wk.have < bal.wk.need) needs.push('🧤 Need WK!');
-                  if ((room.currentPlayer.role === 'Batter' || room.currentPlayer.role === 'WK-Batter') && bal.batters.have < bal.batters.need) needs.push('🏏 Need Batter!');
-                  if (room.currentPlayer.role === 'Bowler' && bal.bowlers.have < bal.bowlers.need) needs.push('🎯 Need Bowler!');
-                  if (room.currentPlayer.role === 'All-rounder' && bal.allRounders.have < bal.allRounders.need) needs.push('⚡ Need All-rounder!');
-                  if (needs.length > 0) {
+                  const need = smartNeedLabel(sport, room.currentPlayer, me?.team || []);
+                  if (need) {
                     return (
                       <div style={{
                         display: 'inline-block',
@@ -1063,7 +996,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                         fontWeight: 800,
                         animation: 'pulse 1s ease infinite'
                       }}>
-                        {needs[0]}
+                        {need}
                       </div>
                     );
                   }
@@ -1082,14 +1015,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
               position: 'relative',
               zIndex: 1
             }}>
-              {[
-                { label: 'M', value: room.currentPlayer.matches },
-                { label: 'Runs', value: room.currentPlayer.runs },
-                ...(room.currentPlayer.battingAvg ? [{ label: 'Avg', value: room.currentPlayer.battingAvg }] : []),
-                ...(room.currentPlayer.strikeRate ? [{ label: 'SR', value: room.currentPlayer.strikeRate }] : []),
-                ...(room.currentPlayer.wickets !== null ? [{ label: 'Wkts', value: room.currentPlayer.wickets }] : []),
-                ...(room.currentPlayer.economy ? [{ label: 'Econ', value: room.currentPlayer.economy }] : []),
-              ].map((stat, i) => (
+              {sport.statFields(room.currentPlayer).map((stat, i) => (
                 <div key={i} style={{
                   padding: '0.4rem 0.9rem',
                   background: 'rgba(255,255,255,0.08)',
@@ -1110,17 +1036,17 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                 {room.currentBid > 0 ? (
                   <div>
                     <div style={{ fontSize: '0.85rem', opacity: 0.7, marginBottom: '0.2rem' }}>
-                      Current Bid by <strong style={{ color: '#ffd700' }}>{room.currentBidder}</strong>
+                      Current Bid by {crest(room.players.find(p => p.id === room.currentBidderId)?.franchise, 18)}<strong style={{ color: '#ffd700' }}>{room.currentBidder}</strong>
                     </div>
                     <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#00ff88' }}>
-                      ₹{room.currentBid >= 1 ? room.currentBid.toFixed(2) + 'Cr' : (room.currentBid * 100).toFixed(0) + 'L'}
+                      {money(room.currentBid)}
                     </div>
                   </div>
                 ) : (
                   <div>
                     <div style={{ fontSize: '0.85rem', opacity: 0.6 }}>Starting Bid</div>
                     <div style={{ fontSize: '2rem', fontWeight: 800 }}>
-                      ₹{room.currentPlayer.basePrice >= 1 ? room.currentPlayer.basePrice + 'Cr' : (room.currentPlayer.basePrice * 100).toFixed(0) + 'L'}
+                      {money(room.currentPlayer.basePrice)}
                     </div>
                   </div>
                 )}
@@ -1209,7 +1135,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                     <div style={{ fontSize: '0.8rem', opacity: 0.85, marginBottom: '0.15rem' }}>
                       {getBidIncrementLabel()} Increment
                     </div>
-                    <div>BID ₹{getNextBidAmount() >= 1 ? getNextBidAmount().toFixed(2) + 'Cr' : (getNextBidAmount() * 100).toFixed(0) + 'L'}</div>
+                    <div>BID {money(getNextBidAmount())}</div>
                   </button>
                 )}
               </div>
@@ -1252,7 +1178,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                           fontFamily: 'inherit'
                         }}
                       />
-                      <span style={{ fontSize: '0.8rem' }}>Cr</span>
+                      <span style={{ fontSize: '0.8rem' }}>{sport.unit}</span>
                       <button
                         onClick={toggleAutoBid}
                         style={{
@@ -1300,7 +1226,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                         gap: '0.4rem'
                       }}
                     >
-                      🤖 Auto Bid {me?.autoBid?.enabled ? `ON (₹${me?.autoBid?.maxPrice}Cr)` : 'OFF'}
+                      🤖 Auto Bid {me?.autoBid?.enabled ? `ON (${money(me?.autoBid?.maxPrice)})` : 'OFF'}
                     </button>
                   )}
                 </div>
@@ -1324,7 +1250,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                       borderRadius: '10px',
                       fontWeight: 600
                     }}>
-                      🤖 {p.name} auto-bidding up to ₹{p.autoBid.maxPrice}Cr
+                      🤖 {p.name} auto-bidding up to {money(p.autoBid.maxPrice)}
                     </span>
                   ))}
                 </div>
@@ -1405,13 +1331,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
           <div style={{ marginBottom: '1rem' }}>
             <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.5rem', color: '#e94560' }}>Squad Balance</div>
             {(() => {
-              const bal = getSquadBalance(me?.team || []);
-              const items = [
-                { label: 'Wicket Keeper', have: bal.wk.have, need: bal.wk.need, icon: '🧤' },
-                { label: 'Batters (incl WK)', have: bal.batters.have, need: bal.batters.need, icon: '🏏' },
-                { label: 'Bowlers', have: bal.bowlers.have, need: bal.bowlers.need, icon: '🎯' },
-                { label: 'All-Rounders', have: bal.allRounders.have, need: bal.allRounders.need, icon: '⚡' },
-              ];
+              const items = sport.squadNeeds(me?.team || []);
               return items.map((item, i) => (
                 <div key={i} style={{
                   display: 'flex',
@@ -1436,7 +1356,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
         <div style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
             <span>Budget Left</span>
-            <span style={{ color: '#00ff88', fontWeight: 700 }}>₹{me?.budget?.toFixed(1) || 0}Cr</span>
+            <span style={{ color: '#00ff88', fontWeight: 700 }}>{money(me?.budget || 0)}</span>
           </div>
           <div className="budget-bar">
             <div 
@@ -1448,7 +1368,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
             />
           </div>
           <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)' }}>
-            Spent: ₹{me?.spent?.toFixed(1) || 0}Cr
+            Spent: {money(me?.spent || 0)}
           </div>
         </div>
 
@@ -1470,7 +1390,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
               <div style={{ fontWeight: 600 }}>{p.name}</div>
               <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>{p.role} | {p.team}</div>
             </div>
-            <div className="price">₹{p.soldPrice}Cr</div>
+            <div className="price">{money(p.soldPrice)}</div>
           </div>
         ))}
 
@@ -1514,7 +1434,7 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
               marginBottom: '0.4rem'
             }}>
               <strong>{sale.player.name}</strong> → {sale.soldToName}
-              <div style={{ color: '#00ff88' }}>₹{sale.soldPrice}Cr</div>
+              <div style={{ color: '#00ff88' }}>{money(sale.soldPrice)}</div>
             </div>
           ))}
           {(!room.soldPlayers || room.soldPlayers.length === 0) && (

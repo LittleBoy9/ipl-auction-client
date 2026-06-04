@@ -1,21 +1,34 @@
 import { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import StadiumBackground from '../components/StadiumBackground';
+import { SPORTS, getSport } from '../data/sports';
 
-const TEAMS = [
-  { code: 'CSK', name: 'Chennai Super Kings', color: '#f4c430', logo: '/teams/csk.svg' },
-  { code: 'MI', name: 'Mumbai Indians', color: '#004ba0', logo: '/teams/mi.svg' },
-  { code: 'RCB', name: 'Royal Challengers', color: '#ec1c24', logo: '/teams/rcb.svg' },
-  { code: 'KKR', name: 'Kolkata Knight Riders', color: '#3a225d', logo: '/teams/kkr.svg' },
-  { code: 'SRH', name: 'Sunrisers Hyderabad', color: '#f26522', logo: '/teams/srh.svg' },
-  { code: 'DC', name: 'Delhi Capitals', color: '#0078bc', logo: '/teams/dc.svg' },
-  { code: 'PBKS', name: 'Punjab Kings', color: '#d71920', logo: '/teams/pbks.svg' },
-  { code: 'RR', name: 'Rajasthan Royals', color: '#254aa5', logo: '/teams/rr.svg' },
-  { code: 'LSG', name: 'Lucknow Super Giants', color: '#a5d8f0', logo: '/teams/lsg.svg' },
-  { code: 'GT', name: 'Gujarat Titans', color: '#1b2133', logo: '/teams/gt.svg' },
-];
+// Renders one franchise: real crest from team.logo if it loads, otherwise a
+// coloured monogram badge. Drop a file at /teams/<code>.svg to use a real logo.
+function FranchiseChip({ team, selected, onClick }) {
+  const [showLogo, setShowLogo] = useState(!!team.logo);
+  return (
+    <div
+      className={`franchise-chip ${selected ? 'selected' : ''}`}
+      onClick={onClick}
+      style={{ '--team-color': team.color }}
+    >
+      {showLogo ? (
+        <img src={team.logo} alt={team.name} onError={() => setShowLogo(false)} />
+      ) : (
+        <div style={{
+          width: '34px', height: '34px', borderRadius: '50%',
+          background: team.color, color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '0.58rem', fontWeight: 800, letterSpacing: '0.5px'
+        }}>{team.code}</div>
+      )}
+      <span>{team.code}</span>
+    </div>
+  );
+}
 
-export default function Lobby({ onRoomCreated, onRoomJoined }) {
+export default function Lobby({ sport, onSportChange, onRoomCreated, onRoomJoined }) {
   const { socket, connected } = useSocket();
   const [mode, setMode] = useState('home'); // home, create, join
   const [name, setName] = useState('');
@@ -29,9 +42,22 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const sportCfg = getSport(sport);
+
+  // Switching sport resets sport-specific picks (franchises + budget differ).
+  const chooseSport = (id) => {
+    onSportChange(id);
+    setMyFranchise('');
+    setBudget(getSport(id).defaultBudget);
+  };
+
   const handleCreateRoom = () => {
     if (!name.trim()) {
       setError('Please enter your name');
+      return;
+    }
+    if (!myFranchise) {
+      setError('Please select your franchise');
       return;
     }
     if (!connected) {
@@ -44,6 +70,7 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
     socket.emit('create-room', {
       hostName: name.trim(),
       settings: {
+        sport,
         budget,
         squadSize,
         bidTimer,
@@ -104,7 +131,7 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
   if (mode === 'home') {
     return (
       <div className="lobby-container">
-        <StadiumBackground />
+        <StadiumBackground sport={sport} />
 
         <div className="lobby-card lobby-wide">
           {/* About Me Section */}
@@ -114,12 +141,13 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
             </div>
             <div className="about-me-info">
               <h3>Hey, I'm Sounak! 👋</h3>
-              <p>Full-stack developer & cricket fanatic. Built this IPL 2026 Auction Game so friends can bid, strategize, and build dream squads together — just like the real IPL auction!</p>
+              <p>Full-stack developer & sports fanatic. Built this multiplayer Auction Game — pick <strong>Cricket (IPL)</strong> or <strong>Football (EPL &amp; LaLiga)</strong>, then bid, strategize, and build your dream squad with friends!</p>
               <div className="about-me-tags">
                 <span>⚛️ React</span>
                 <span>⚡ Node.js</span>
                 <span>🔌 Socket.io</span>
-                <span>🏏 IPL 2026</span>
+                <span>🏏 Cricket</span>
+                <span>⚽ Football</span>
               </div>
               <div className="about-me-socials">
                 <a className="social-linkedin" href="https://www.linkedin.com/in/sounakdas?utm_source=ipl_auction" target="_blank" rel="noopener noreferrer">
@@ -140,8 +168,10 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
 
           <div className="home-divider" />
 
-          <h2>🏏 IPL 2026 Auction</h2>
-          <p>Create a room and bid on real IPL 2026 players with your friends!</p>
+          <h2>{sportCfg.icon} {sport === 'cricket' ? 'IPL Auction' : 'Football Auction'}</h2>
+          <p>{sport === 'cricket'
+            ? 'Create a room and bid on real IPL players with your friends!'
+            : 'Create a room and bid on football stars from the EPL & LaLiga with your friends!'}</p>
           
           <div className="input-group">
             <label>Your Name</label>
@@ -152,6 +182,36 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
               onChange={(e) => setName(e.target.value)}
               maxLength={20}
             />
+          </div>
+
+          <div className="input-group">
+            <label>Choose Sport</label>
+            <div style={{ display: 'flex', gap: '0.6rem' }}>
+              {Object.values(SPORTS).map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => chooseSport(s.id)}
+                  style={{
+                    flex: 1,
+                    padding: '0.8rem',
+                    borderRadius: '12px',
+                    border: sport === s.id ? '2px solid #e94560' : '1.5px solid rgba(255,255,255,0.12)',
+                    background: sport === s.id ? 'rgba(233,69,96,0.15)' : 'rgba(255,255,255,0.04)',
+                    color: '#fff',
+                    fontWeight: sport === s.id ? 700 : 500,
+                    fontSize: '0.95rem',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  {s.icon} {s.id === 'cricket' ? 'Cricket' : 'Football'}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', marginTop: '0.4rem' }}>
+              {sportCfg.label}
+            </p>
           </div>
 
           <button className="btn btn-primary" onClick={() => setMode('create')} disabled={!name.trim()}>
@@ -177,7 +237,7 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
   if (mode === 'create') {
     return (
       <div className="lobby-container">
-        <StadiumBackground />
+        <StadiumBackground sport={sport} />
         <div className="lobby-card lobby-wide">
           <h2>⚙️ Room Settings</h2>
           <p>Configure your auction</p>
@@ -188,14 +248,11 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
             <h4>💰 Budget & Squad</h4>
             <div className="settings-row">
               <div className="input-group">
-                <label>Budget (₹ Cr)</label>
+                <label>Budget</label>
                 <select value={budget} onChange={(e) => setBudget(Number(e.target.value))}>
-                  <option value={50}>₹50 Cr</option>
-                  <option value={75}>₹75 Cr</option>
-                  <option value={100}>₹100 Cr</option>
-                  <option value={120}>₹120 Cr</option>
-                  <option value={150}>₹150 Cr</option>
-                  <option value={200}>₹200 Cr</option>
+                  {sportCfg.budgetOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
               </div>
               <div className="input-group">
@@ -226,10 +283,7 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
                   <option value={50}>50</option>
                   <option value={100}>100</option>
                   <option value={150}>150</option>
-                  <option value={200}>200</option>
-                  <option value={250}>All (250+)</option>
-                  <option value={300}>300</option>
-                  <option value={400}>400</option>
+                  <option value={250}>All</option>
                 </select>
               </div>
               <div className="input-group">
@@ -249,21 +303,18 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
               </div>
             </div>
 
-            <h4 style={{ marginTop: '1.5rem' }}>🏏 Pick Your Franchise</h4>
+            <h4 style={{ marginTop: '1.5rem' }}>{sportCfg.icon} Pick Your Franchise</h4>
             <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginBottom: '0.8rem' }}>
-              Choose which IPL team you want to represent
+              Choose which {sport === 'cricket' ? 'IPL team' : 'club'} you want to represent
             </p>
             <div className="franchise-picker">
-              {TEAMS.map(team => (
-                <div
+              {sportCfg.franchises.map(team => (
+                <FranchiseChip
                   key={team.code}
-                  className={`franchise-chip ${myFranchise === team.code ? 'selected' : ''}`}
+                  team={team}
+                  selected={myFranchise === team.code}
                   onClick={() => setMyFranchise(team.code)}
-                  style={{ '--team-color': team.color }}
-                >
-                  <img src={team.logo} alt={team.name} />
-                  <span>{team.code}</span>
-                </div>
+                />
               ))}
             </div>
           </div>
@@ -284,7 +335,7 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
   if (mode === 'join') {
     return (
       <div className="lobby-container">
-        <StadiumBackground />
+        <StadiumBackground sport={sport} />
         <div className="lobby-card">
           <h2>🔗 Join Room</h2>
           <p>Enter the room code and pick your franchise</p>
@@ -304,19 +355,16 @@ export default function Lobby({ onRoomCreated, onRoomJoined }) {
 
           <div style={{ marginBottom: '1.2rem' }}>
             <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'rgba(255,255,255,0.8)', textAlign: 'left' }}>
-              🏏 Pick Your Franchise
+              {sportCfg.icon} Pick Your Franchise <span style={{ opacity: 0.5, fontWeight: 400 }}>({sport === 'cricket' ? 'Cricket' : 'Football'})</span>
             </label>
             <div className="franchise-picker">
-              {TEAMS.map(team => (
-                <div
+              {sportCfg.franchises.map(team => (
+                <FranchiseChip
                   key={team.code}
-                  className={`franchise-chip ${myFranchise === team.code ? 'selected' : ''}`}
+                  team={team}
+                  selected={myFranchise === team.code}
                   onClick={() => setMyFranchise(team.code)}
-                  style={{ '--team-color': team.color }}
-                >
-                  <img src={team.logo} alt={team.name} />
-                  <span>{team.code}</span>
-                </div>
+                />
               ))}
             </div>
           </div>
