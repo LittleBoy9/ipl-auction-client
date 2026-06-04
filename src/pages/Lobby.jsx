@@ -37,7 +37,6 @@ export default function Lobby({ sport, onSportChange, onRoomCreated, onRoomJoine
   const [squadSize, setSquadSize] = useState(11);
   const [bidTimer, setBidTimer] = useState(15);
   const [maxPlayers, setMaxPlayers] = useState(250);
-  const [botCount, setBotCount] = useState(0);
   const [myFranchise, setMyFranchise] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -76,7 +75,6 @@ export default function Lobby({ sport, onSportChange, onRoomCreated, onRoomJoine
         bidTimer,
         franchise: myFranchise,
         maxPlayers: maxPlayers === 250 ? undefined : maxPlayers,
-        botCount,
       }
     });
 
@@ -284,21 +282,6 @@ export default function Lobby({ sport, onSportChange, onRoomCreated, onRoomJoine
                   <option value={100}>100</option>
                   <option value={150}>150</option>
                   <option value={250}>All</option>
-                </select>
-              </div>
-              <div className="input-group">
-                <label>🤖 AI Bots</label>
-                <select value={botCount} onChange={(e) => setBotCount(Number(e.target.value))}>
-                  <option value={0}>No Bots</option>
-                  <option value={1}>1 Bot</option>
-                  <option value={2}>2 Bots</option>
-                  <option value={3}>3 Bots</option>
-                  <option value={4}>4 Bots</option>
-                  <option value={5}>5 Bots</option>
-                  <option value={6}>6 Bots</option>
-                  <option value={7}>7 Bots</option>
-                  <option value={8}>8 Bots</option>
-                  <option value={9}>9 Bots</option>
                 </select>
               </div>
             </div>

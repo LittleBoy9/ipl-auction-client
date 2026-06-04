@@ -27,11 +27,12 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
   const sport = getSport(room.settings.sport);
   const money = (amt) => sport.money(amt);
 
-  // Small team crest for a franchise code (uses the fetched badge URLs).
-  const franchiseLogo = (code) => sport.franchises.find(f => f.code === code)?.logo || null;
+  // A franchise is only valid if it belongs to THIS room's sport — guards
+  // against stale/cross-sport values (e.g. a cricket code in a football room).
+  const franchiseOf = (code) => (code ? sport.franchises.find(f => f.code === code) : null) || null;
   const crest = (code, size = 16) => {
-    if (!code) return null;
-    const logo = franchiseLogo(code);
+    const team = franchiseOf(code);
+    const logo = team?.logo;
     if (!logo) return null;
     return (
       <img
@@ -172,8 +173,6 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
     socket.on('auction-resumed', handleRoomUpdate);
     socket.on('auto-bid-updated', handleRoomUpdate);
     socket.on('new-reaction', handleReaction);
-    socket.on('bot-added', handleRoomUpdate);
-    socket.on('bot-removed', handleRoomUpdate);
 
     return () => {
       socket.off('room-update', handleRoomUpdate);
@@ -192,8 +191,6 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
       socket.off('auction-resumed', handleRoomUpdate);
       socket.off('auto-bid-updated', handleRoomUpdate);
       socket.off('new-reaction', handleReaction);
-      socket.off('bot-added', handleRoomUpdate);
-      socket.off('bot-removed', handleRoomUpdate);
     };
   }, [socket, playerId]);
 
@@ -229,15 +226,6 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
     socket.emit('send-reaction', { roomCode: room.code, emoji });
   };
 
-  const addBot = () => {
-    if (!socket || !isHost) return;
-    socket.emit('add-bot', { roomCode: room.code });
-  };
-
-  const removeBot = (botId) => {
-    if (!socket || !isHost) return;
-    socket.emit('remove-bot', { roomCode: room.code, botId });
-  };
 
   const getNextBidAmount = () => {
     if (!room.currentPlayer) return 0;
@@ -335,12 +323,12 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                 <span>{p.connected ? '🟢' : '🔴'}{p.isBot ? '🤖' : ''}</span>
                 {crest(p.franchise, 20)}
                 <span style={{ fontWeight: 600 }}>{p.name}</span>
-                {p.franchise && (
-                  <span style={{ 
-                    fontSize: '0.65rem', 
+                {franchiseOf(p.franchise) && (
+                  <span style={{
+                    fontSize: '0.65rem',
                     fontWeight: 800,
-                    background: 'rgba(255,255,255,0.1)', 
-                    padding: '2px 8px', 
+                    background: 'rgba(255,255,255,0.1)',
+                    padding: '2px 8px',
                     borderRadius: '4px',
                     border: '1px solid rgba(255,255,255,0.15)'
                   }}>
@@ -348,36 +336,8 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
                   </span>
                 )}
                 {p.isHost && <span style={{ fontSize: '0.7rem', background: '#e94560', padding: '2px 8px', borderRadius: '4px' }}>HOST</span>}
-                {p.isBot && isHost && (
-                  <button 
-                    onClick={() => removeBot(p.id)}
-                    style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', fontSize: '0.8rem' }}
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             ))}
-            
-            {isHost && room.players.filter(p => p.connected).length < 10 && (
-              <button 
-                onClick={addBot}
-                style={{
-                  width: '100%',
-                  padding: '0.6rem',
-                  marginTop: '0.5rem',
-                  background: 'rgba(0,184,148,0.1)',
-                  border: '1.5px dashed rgba(0,184,148,0.4)',
-                  borderRadius: '8px',
-                  color: '#00ff88',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit'
-                }}
-              >
-                + Add AI Bot
-              </button>
-            )}
           </div>
 
           <div style={{ textAlign: 'left', margin: '1rem 0', padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px' }}>
@@ -390,11 +350,27 @@ export default function AuctionRoom({ roomData: initialRoomData, playerId, onLea
             </p>
           </div>
 
-          {isHost && (
-            <button className="btn btn-primary" onClick={startAuction}>
-              🚀 Start Auction
-            </button>
-          )}
+          {isHost && (() => {
+            const playerCount = room.players.filter(p => p.connected).length;
+            const canStart = playerCount >= 2;
+            return (
+              <>
+                <button
+                  className="btn btn-primary"
+                  onClick={startAuction}
+                  disabled={!canStart}
+                  style={!canStart ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+                >
+                  🚀 Start Auction
+                </button>
+                {!canStart && (
+                  <p style={{ color: '#ffcc00', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                    Need at least 2 players — share the room code to invite a friend!
+                  </p>
+                )}
+              </>
+            );
+          })()}
 
           {!isHost && (
             <p style={{ color: 'rgba(255,255,255,0.5)' }}>Waiting for host to start...</p>
